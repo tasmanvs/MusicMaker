@@ -3,6 +3,8 @@ const startRecBtn = document.getElementById('startRec');
 const stopRecBtn = document.getElementById('stopRec');
 const playRecBtn = document.getElementById('playRec');
 const exportBtn = document.getElementById('export');
+const saveBtn = document.getElementById('saveSound');
+const savedList = document.getElementById('savedList');
 const trimStartInput = document.getElementById('trimStart');
 const trimEndInput = document.getElementById('trimEnd');
 const canvas = document.getElementById('spectrogram');
@@ -17,26 +19,83 @@ let mediaRecorder = null;
 let chunks = [];
 let recordedBlob = null;
 
+let historyFrames = [];
+let isCapturing = false;
+let viewOffset = 0;
+let viewWidth = 200; // number of frames visible
+let selectedFrame = 0;
+let isDragging = false;
+let dragStartX = 0;
+const FRAME_DURATION = 1 / 60;
+let currentAudio = null;
+
 function drawSpectrogram() {
     requestAnimationFrame(drawSpectrogram);
     analyser.getByteFrequencyData(spectData);
 
-    // shift canvas
+    if (isCapturing) {
+        historyFrames.push(Array.from(spectData));
+        viewWidth = Math.min(historyFrames.length, viewWidth);
+    }
+
     const width = canvas.width;
     const height = canvas.height;
-    const imageData = canvasCtx.getImageData(1, 0, width - 1, height);
-    canvasCtx.putImageData(imageData, 0, 0);
-
-    for (let i = 0; i < spectData.length; i++) {
-        const value = spectData[i];
-        const percent = value / 255;
-        const hue = 240 - (240 * percent);
-        canvasCtx.fillStyle = `hsl(${hue}, 100%, 50%)`;
-        canvasCtx.fillRect(width - 1, height - i, 1, 1);
+    canvasCtx.clearRect(0, 0, width, height);
+    const step = viewWidth / width;
+    for (let x = 0; x < width; x++) {
+        const frameIdx = Math.floor(viewOffset + x * step);
+        const frame = historyFrames[frameIdx];
+        if (!frame) continue;
+        for (let i = 0; i < frame.length; i++) {
+            const value = frame[i];
+            const percent = value / 255;
+            const hue = 240 - (240 * percent);
+            canvasCtx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+            canvasCtx.fillRect(x, height - i, 1, 1);
+        }
+    }
+    if (selectedFrame >= viewOffset && selectedFrame <= viewOffset + viewWidth) {
+        const posX = Math.floor((selectedFrame - viewOffset) / viewWidth * width);
+        canvasCtx.strokeStyle = 'red';
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(posX, 0);
+        canvasCtx.lineTo(posX, height);
+        canvasCtx.stroke();
     }
 }
 
 drawSpectrogram();
+
+canvas.addEventListener('mousedown', e => {
+    isDragging = true;
+    dragStartX = e.offsetX;
+});
+
+canvas.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    const dx = e.offsetX - dragStartX;
+    dragStartX = e.offsetX;
+    viewOffset -= dx / canvas.width * viewWidth;
+    viewOffset = Math.max(0, Math.min(historyFrames.length - viewWidth, viewOffset));
+});
+
+window.addEventListener('mouseup', () => { isDragging = false; });
+
+canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const zoom = e.deltaY < 0 ? 0.9 : 1.1;
+    const newWidth = viewWidth * zoom;
+    if (newWidth >= 10 && newWidth <= historyFrames.length) {
+        viewWidth = newWidth;
+        viewOffset = Math.max(0, Math.min(historyFrames.length - viewWidth, viewOffset));
+    }
+});
+
+canvas.addEventListener('click', e => {
+    if (e.ctrlKey) {
+        selectedFrame = Math.floor(viewOffset + e.offsetX / canvas.width * viewWidth);
+    }
+});
 
 playSampleBtn.onclick = () => {
     const osc = audioCtx.createOscillator();
@@ -46,8 +105,10 @@ playSampleBtn.onclick = () => {
     osc.connect(gain);
     gain.connect(analyser);
     gain.connect(audioCtx.destination);
+    isCapturing = true;
     osc.start();
     osc.stop(audioCtx.currentTime + 2);
+    osc.onended = () => { isCapturing = false; };
 };
 
 startRecBtn.onclick = async () => {
@@ -61,31 +122,31 @@ startRecBtn.onclick = async () => {
         chunks = [];
         playRecBtn.disabled = false;
         exportBtn.disabled = false;
+        saveBtn.disabled = false;
         const buf = await audioCtx.decodeAudioData(await recordedBlob.arrayBuffer());
         trimEndInput.value = buf.duration.toFixed(2);
     };
     mediaRecorder.start();
     startRecBtn.disabled = true;
     stopRecBtn.disabled = false;
+    playRecBtn.disabled = true;
+    exportBtn.disabled = true;
+    saveBtn.disabled = true;
+    historyFrames = [];
+    viewOffset = 0;
+    selectedFrame = 0;
+    isCapturing = true;
 };
 
 stopRecBtn.onclick = () => {
     if (mediaRecorder) mediaRecorder.stop();
     startRecBtn.disabled = false;
     stopRecBtn.disabled = true;
+    isCapturing = false;
 };
 
 playRecBtn.onclick = () => {
-    if (!recordedBlob) return;
-    const url = URL.createObjectURL(recordedBlob);
-    const audio = new Audio(url);
-    const source = audioCtx.createMediaElementSource(audio);
-    source.connect(analyser);
-    source.connect(audioCtx.destination);
-    audio.onended = () => {
-        source.disconnect();
-    };
-    audio.play();
+    togglePlay();
 };
 
 function bufferToWave(buffer, len) {
@@ -152,3 +213,98 @@ exportBtn.onclick = async () => {
     a.download = 'recording.wav';
     a.click();
 };
+
+async function getTrimmedBlob() {
+    const arrayBuffer = await recordedBlob.arrayBuffer();
+    const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+    let start = parseFloat(trimStartInput.value) || 0;
+    let end = parseFloat(trimEndInput.value);
+    if (!end || end > decoded.duration) end = decoded.duration;
+    start = Math.max(0, Math.min(start, decoded.duration));
+    end = Math.max(start, Math.min(end, decoded.duration));
+    const length = Math.floor((end - start) * decoded.sampleRate);
+    const trimmed = audioCtx.createBuffer(decoded.numberOfChannels, length, decoded.sampleRate);
+    for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+        const channel = decoded.getChannelData(ch).subarray(Math.floor(start * decoded.sampleRate), Math.floor(end * decoded.sampleRate));
+        trimmed.copyToChannel(channel, ch, 0);
+    }
+    return bufferToWave(trimmed, length);
+}
+
+saveBtn.onclick = async () => {
+    if (!recordedBlob) return;
+    const name = prompt('Save sound as:');
+    if (!name) return;
+    const wav = await getTrimmedBlob();
+    const reader = new FileReader();
+    reader.onloadend = () => {
+        const sounds = JSON.parse(localStorage.getItem('sounds') || '[]');
+        sounds.push({name, data: reader.result});
+        localStorage.setItem('sounds', JSON.stringify(sounds));
+        updateSavedList();
+    };
+    reader.readAsDataURL(wav);
+};
+
+function updateSavedList() {
+    const sounds = JSON.parse(localStorage.getItem('sounds') || '[]');
+    savedList.innerHTML = '';
+    sounds.forEach((s, idx) => {
+        const li = document.createElement('li');
+        const btn = document.createElement('button');
+        btn.textContent = s.name;
+        btn.onclick = () => loadSound(idx);
+        li.appendChild(btn);
+        savedList.appendChild(li);
+    });
+}
+
+async function loadSound(idx) {
+    const sounds = JSON.parse(localStorage.getItem('sounds') || '[]');
+    const dataUrl = sounds[idx].data;
+    const res = await fetch(dataUrl);
+    const buffer = await res.arrayBuffer();
+    recordedBlob = new Blob([buffer], {type: 'audio/wav'});
+    playRecBtn.disabled = false;
+    exportBtn.disabled = false;
+    saveBtn.disabled = false;
+    const buf = await audioCtx.decodeAudioData(buffer.slice(0));
+    trimStartInput.value = 0;
+    trimEndInput.value = buf.duration.toFixed(2);
+    historyFrames = [];
+    viewOffset = 0;
+    selectedFrame = 0;
+}
+
+function togglePlay() {
+    if (!recordedBlob) return;
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+        isCapturing = false;
+        return;
+    }
+    const url = URL.createObjectURL(recordedBlob);
+    const audio = new Audio(url);
+    const source = audioCtx.createMediaElementSource(audio);
+    source.connect(analyser);
+    source.connect(audioCtx.destination);
+    audio.currentTime = selectedFrame * FRAME_DURATION;
+    audio.onended = () => {
+        source.disconnect();
+        currentAudio = null;
+        isCapturing = false;
+    };
+    currentAudio = audio;
+    isCapturing = true;
+    audio.play();
+}
+
+document.addEventListener('keydown', e => {
+    if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlay();
+    }
+});
+
+updateSavedList();
