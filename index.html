@@ -13,6 +13,7 @@
         <button id="startRec">Start Recording</button>
         <button id="stopRec" disabled>Stop Recording</button>
         <button id="playRec" disabled>Play Recording</button>
+        <button id="saveSound" disabled>Save Sound</button>
     </div>
     <div class="edit">
         <label>Trim Start (s): <input type="number" id="trimStart" value="0" step="0.1" min="0"></label>
@@ -20,6 +21,10 @@
     </div>
     <button id="export" disabled>Export WAV</button>
     <canvas id="spectrogram" width="800" height="256"></canvas>
+    <div id="sidebar">
+        <h3>Saved Sounds</h3>
+        <ul id="savedList"></ul>
+    </div>
 
     <script src="script.js"></script>
 </body>

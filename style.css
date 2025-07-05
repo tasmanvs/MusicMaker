@@ -14,3 +14,19 @@ canvas {
 #export {
     margin: 5px;
 }
+
+#sidebar {
+    text-align: left;
+    margin-top: 20px;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    padding: 10px;
+    display: inline-block;
+}
+
+#savedList li button {
+    display: block;
+    margin: 2px 0;
+    width: 100%;
+}
