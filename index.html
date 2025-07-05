@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Sound Maker</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Simple Sound Maker</h1>
+    <div class="controls">
+        <button id="playSample">Play Sample Tone</button>
+        <button id="startRec">Start Recording</button>
+        <button id="stopRec" disabled>Stop Recording</button>
+        <button id="playRec" disabled>Play Recording</button>
+    </div>
+    <div class="edit">
+        <label>Trim Start (s): <input type="number" id="trimStart" value="0" step="0.1" min="0"></label>
+        <label>Trim End (s): <input type="number" id="trimEnd" value="0" step="0.1" min="0"></label>
+    </div>
+    <button id="export" disabled>Export WAV</button>
+    <canvas id="spectrogram" width="800" height="256"></canvas>
+
+    <script src="script.js"></script>
+</body>
+</html>
